@@ -1,30 +1,55 @@
-library(leaflet)
-library(maps)
-library(maptools)
-library(sp)
+library(tidyr)
 library(dplyr)
-library(htmltools)
+library(tigris)
 
-state_sp <- local({x <- map("state", fill = TRUE, plot = FALSE); map2SpatialPolygons(x, x$names)})
-county_sp <- local({x <- map("county", fill = TRUE, plot = FALSE); map2SpatialPolygons(x, x$names)})
+## state and county spatial and lookup tables ---------------------
 
-county_data <- county.fips %>%
-  tidyr::extract(polyname, into = 'county_name', regex = '[a-z ]+,([a-z ]+)', remove = FALSE) %>%
-  mutate(county_name = stringr::str_to_title(county_name),
-         state_fips = floor(fips / 1000)) %>%
-  left_join(state.fips %>% distinct(fips, abb), by = c('state_fips' = 'fips')) %>%
-  mutate(county_name = paste0(county_name, ', ', abb, ' (', sprintf('%05d', fips) ,')')) %>%
-  left_join(unemp, by = 'fips') %>% 
-  mutate(unemp = coalesce(unemp, 0),
-         hover_txt = purrr::map(stringr::str_c("name: ", county_name, "<br>", "Unemployment Percent: ", unemp, "%"), ~HTML(.)))
+# based on: https://www.datascienceriot.com/mapping-us-counties-in-r-with-fips/kris/
 
-county_names <- purrr::set_names(as.character(county_data$polyname), county_data$county_name)
+# download shape files
+county_sp <- counties(cb = TRUE, year = 2014, resolution = '20m')
+state_sp <- states(cb = TRUE, year = 2014, resolution = '20m')
 
-map.data <- list(
+# remove non-contiguous US
+state_sp <- state_sp[!state_sp$STATEFP %in% c("02", "15", "72", "66", "78", "60", "69",
+                                              "64", "68", "70", "74", "81", "84", "86", 
+                                              "87", "89", "71", "76", "95", "79"),]
+county_sp <- county_sp[!county_sp$STATEFP %in% c("02", "15", "72", "66", "78", "60", "69",
+                                                 "64", "68", "70", "74", "81", "84", "86", 
+                                                 "87", "89", "71", "76", "95", "79"),]
+
+county_table <- fips_codes %>%
+  mutate(GEOID = paste0(state_code, county_code),
+         county_name = paste0(county, ', ', state, ' (', GEOID, ')'))
+  
+county_names <- purrr::set_names(county_table$GEOID, county_table$county_name)
+
+## county level data ----------------------------------------------
+
+pop_unemp <- maps::unemp %>% 
+  mutate(GEOID = sprintf('%05d', fips)) %>%
+  gather(key = 'key', value = 'value', -GEOID, -fips) %>%
+  select(-fips)
+
+pop_density <- pop_unemp %>%
+  filter(key == 'pop') %>%
+  inner_join(county_sp@data, by = 'GEOID') %>%
+  mutate(key = 'density',
+         value = log(1 + (coalesce(value / (ALAND + AWATER) * 1000000, 0)))) %>%
+  select(GEOID, key, value)
+
+county_data <- bind_rows(pop_unemp, pop_density)
+county_stats <- unique(county_data$key)
+
+## combine and save results ---------------------------------------
+
+appdat <- list(
   state_sp = state_sp,
   county_sp = county_sp,
-  county_data = county_data,
-  county_names = county_names
+  county_table = county_table,
+  county_names = county_names,
+  county_stats = county_stats,
+  county_data = county_data
 )
 
-readr::write_rds(map.data, 'map_data.rds')
+readr::write_rds(appdat, 'appdat.rds')
