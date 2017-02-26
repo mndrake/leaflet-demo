@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "library(shiny)\nlibrary(leaflet)\nlibrary(sp)\nlibrary(dplyr)\n\n# global session variables ------------------------------------------\n\n# read in application data\nappdat <- readr::read_rds('map_data.rds')\n\ncounty_sp <- local({\n  x <- appdat$county_data\n  rownames(x) <- x$polyname\n  SpatialPolygonsDataFrame(appdat$county_sp, data = x)\n})\n\npal <- colorNumeric(palette = \"YlGnBu\", domain = county_sp@data$unemp)\n\n# shiny server code ------------------------------------------\n\nshinyServer(function(input, output, session) {\n\n  # initialize county names\n  updateSelectInput(session, 'polyname', choices = c('select county' = '', appdat$county_names))\n  \n  # leaflet proxy for redraws\n  proxy <- leafletProxy(\"county_map\")\n  \n  # maximum map bounding box\n  max_bbox <- bbox(appdat$state_sp)\n\n  # initialize map    \n  output$county_map <- renderLeaflet({\n    leaflet() %>%\n      addProviderTiles(\"CartoDB.PositronNoLabels\",\n                       options = providerTileOptions(noWrap = TRUE, minZoom = 3, maxZoom = 10)) %>%\n      addPolylines(data = appdat$state_sp, color = \"darkgrey\", weight = 0.8, stroke = TRUE) %>%\n      addPolygons(data = county_sp, weight = 0.3, color = \"#b2aeae\", fillOpacity = 0.7, smoothFactor = 0.2,\n                  fillColor = ~pal(unemp), label = ~(hover_txt),\n                  labelOptions = labelOptions(direction = 'auto'),\n                  layerId = ~polyname,\n                  highlightOptions = highlightOptions(color = '#ff0000', opacity = 1,\n                                                      weight = 2, fillOpacity = 1,\n                                                      bringToFront = TRUE, sendToBack = TRUE)) %>%\n      addLegend(pal = pal,\n                values = county_sp@data$unemp,\n                labels = NULL,\n                position = \"bottomleft\",\n                title = NULL,\n                labFormat = labelFormat(suffix = \"%\")) %>%\n      setMaxBounds(max_bbox[1], max_bbox[2], max_bbox[3], max_bbox[4])\n  })\n  \n  ## zoom in on county on selection\n  observe({\n    req(input$polyname != '')\n    # get the selected polygon and extract the label point\n    selected_polygon <- appdat$county_sp[input$polyname]\n    polygon_labpt <- selected_polygon@polygons[[1]]@labpt\n    # remove any previously highlighted polygon\n    proxy %>% removeShape(\"highlighted\")\n    # center the view on the polygon \n    proxy %>% setView(lng = polygon_labpt[1], lat = polygon_labpt[2], zoom = 8)\n    # add a slightly thicker red polygon on top of the selected one\n    proxy %>% addPolylines(stroke = TRUE, weight = 4, color = \"red\",\n                           data = selected_polygon, layerId = \"highlighted\")\n  })\n  \n  ## reset map on click\n  observeEvent(input$reset_map, {\n    updateSelectInput(session, 'polyname', selected = \"\")\n    # remove any previously highlighted polygon\n    proxy %>% removeShape(\"highlighted\")\n    # center the view on the polygon \n    proxy %>% fitBounds(max_bbox[1], max_bbox[2], max_bbox[3], max_bbox[4])\n  })\n  \n  ## select county on click\n  observeEvent(input$county_map_shape_click, {\n    click <- input$county_map_shape_click\n    updateSelectInput(session, 'polyname', selected = click$id)\n  })\n})",
+    "created" : 1488079826995.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1998728783",
+    "id" : "58832855",
+    "lastKnownWriteTime" : 1488080444,
+    "last_content_update" : 1488080444863,
+    "path" : "~/Documents/github/shiny_map/server.R",
+    "project_path" : "server.R",
+    "properties" : {
+        "docOutlineVisible" : "0",
+        "tempName" : "Untitled1"
+    },
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
