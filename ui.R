@@ -1,12 +1,14 @@
 library(shiny)
+library(DT)
 library(leaflet)
 
 
-navbarPage('Map Demo',
-           tabPanel('map',
+navbarPage('Map Demo', id = 'main',
+           tabPanel('map', value = 'map',
                     div(class = 'outer',
                         
-                        tags$head(includeCSS('style.css')),
+                        tags$head(includeCSS('assets/style.css'),
+                                  includeScript("assets/gomap.js")),
                         
                         leafletOutput('county_map', width = '100%', height = '100%'),
                         
@@ -19,5 +21,9 @@ navbarPage('Map Demo',
                                       actionButton("reset_map", "reset map")
                         )
                     )
+           ),
+           tabPanel('data', value = 'map',
+                        DT::dataTableOutput('data'),
+                        conditionalPanel("false", icon("crosshair"))
            )
 )

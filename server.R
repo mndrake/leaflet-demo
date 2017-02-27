@@ -3,11 +3,14 @@ library(leaflet)
 library(sp)
 library(tigris)
 library(dplyr)
+library(htmltools)
+#library(DT)
 
 # global session variables ------------------------------------------
 
 # read in application data
-appdat <- readr::read_rds('appdat.rds')
+if (!file.exists('assets/appdat.rds')) {source('process_data.R')}
+appdat <- readr::read_rds('assets/appdat.rds')
 
 # maximum map bounding box
 max_bbox <- bbox(appdat$state_sp)
@@ -25,7 +28,7 @@ shinyServer(function(input, output, session) {
   # initialize county map 
   output$county_map <- renderLeaflet({
     leaflet() %>%
-      addProviderTiles("CartoDB.PositronNoLabels",
+      addProviderTiles("CartoDB.PositronNoLabels", 
                        options = providerTileOptions(noWrap = TRUE, minZoom = 3, maxZoom = 10)) %>%
       addPolylines(data = appdat$state_sp, color = "darkgrey", weight = 0.8, stroke = TRUE) %>%
       setMaxBounds(max_bbox[1], max_bbox[2], max_bbox[3], max_bbox[4])
@@ -43,13 +46,24 @@ shinyServer(function(input, output, session) {
       filter(key == input$stat) %>% 
       select(-key) %>%
       right_join(appdat$county_table, by = 'GEOID') %>%
-      mutate(hover_txt = purrr::map(stringr::str_c("name: ", county_name, "<br>", 
-                                                   "value: ", sprintf('%.2f', value)), ~HTML(.))) %>%
-      select(GEOID, hover_txt, value) %>%
+      mutate(hover_txt = purrr::map(paste0("name: ", DISPLAY_NAME, "<br>", "value: ", sprintf('%.2f', value)), ~HTML(.))) %>%
+      select(GEOID, hover_txt, COUNTY_NAME, STATE, LAT, LON, value) %>%
       geo_join(appdat$county_sp, ., 'GEOID', 'GEOID')
   })
 
-  # create map layer
+  # data tab table
+  output$data <- DT::renderDataTable({
+    selected_df <- selected_data()
+    df <- selected_df@data %>%
+      mutate(Action = paste0('<a class="go-map" href="" data-lat="', LAT, '" data-long="', LON,
+                             '" data-geoid="', GEOID, '"><i class="fa fa-crosshairs"></i></a>')) %>%
+      select(GEOID, STATEFP, COUNTYFP, COUNTY_NAME, STATE, VALUE = value, Action)
+    action <- DT::dataTableAjax(session, df)
+    DT::datatable(df, options = list(ajax = list(url = action), searching = FALSE), 
+                  escape = FALSE, selection = 'none')
+  })
+  
+  # update county-level map
   observe({
     county_df <- selected_data()
     pal <- colorNumeric(palette = "YlGnBu", domain = county_df@data$value)
@@ -58,7 +72,8 @@ shinyServer(function(input, output, session) {
       clearControls() %>%
       addPolylines(data = appdat$state_sp, color = "darkgrey", weight = 1.2, stroke = TRUE) %>%
       addPolygons(data = county_df, weight = 0.3, color = "#b2aeae", fillOpacity = 0.6, smoothFactor = 0.2,
-                  fillColor = ~pal(value), label = ~(hover_txt),
+                  fillColor = ~pal(value), 
+                  label = ~(hover_txt),
                   labelOptions = labelOptions(direction = 'auto'),
                   layerId = ~GEOID,
                   highlightOptions = highlightOptions(color = '#ff0000', opacity = 1,
@@ -73,17 +88,17 @@ shinyServer(function(input, output, session) {
   
 
   ## events ----
-  appdat$county_names
+
   ## zoom in on county on selection
   observe({
     req(input$polyname != '')
-        # get the selected polygon and extract the label point
+    # get the selected polygon and extract the label point
     selected_polygon <- appdat$county_sp[appdat$county_sp$GEOID == input$polyname,]
     selected_bbox <- bbox(selected_polygon)
     # remove any previously highlighted polygon
     proxy %>% removeShape("highlighted")
     # center the view on the polygon
-    proxy %>% setView(lng = mean(selected_bbox['x',]), 
+    proxy %>% setView(lng = mean(selected_bbox['x',]),
                       lat = mean(selected_bbox['y',]), zoom = 8)
     # add a slightly thicker red polygon on top of the selected one
     proxy %>% addPolylines(stroke = TRUE, weight = 4, color = "red",
@@ -98,10 +113,20 @@ shinyServer(function(input, output, session) {
     # center the view on the polygon
     proxy %>% fitBounds(max_bbox[1], max_bbox[2], max_bbox[3], max_bbox[4])
   })
-
+  
   ## select county on click
   observeEvent(input$county_map_shape_click, {
     click <- input$county_map_shape_click
     updateSelectInput(session, 'polyname', selected = click$id)
   })
+   
+  ## goto selected county from data tab
+  observe({
+    req(input$goto)
+    isolate({selected_geoid <- input$goto$geoid})
+    updateNavbarPage(session, 'main', selected = 'map')
+    updateSelectInput(session, 'polyname', selected = selected_geoid)
+  })
+
 })
+  
